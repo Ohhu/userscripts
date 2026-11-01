@@ -1,13 +1,34 @@
 // ==UserScript==
-// @name         百度网盘 · 批量解压
-// @namespace    https://pan.baidu.com/
-// @version      5.1.0
+// @name         百度网盘批量解压
+// @namespace    pan.baidu.com
+// @version      5.2.1
 // @description  勾选压缩包，批量解压到指定文件夹。
-// @author       DSH
+// @author       zc
+// @license      GPL-3.0-or-later
 // @match        https://pan.baidu.com/disk/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
+
+/*
+ * 百度网盘批量解压
+ * Copyright (C) 2026 zc
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
 
 (function () {
   'use strict';
@@ -113,7 +134,7 @@
   }
   function startUnzip(zipPath, topath, subpaths) {
     return getToken().then(function (token) {
-      if (!token) throw new Error('登录状态已失效');
+      if (!token) throw new Error('登录已失效');
       return apiGet('/api/zipfile/copy', {
         opera: 'unzip', bdstoken: token, topath: topath,
         path: zipPath, subpath: JSON.stringify(subpaths || []),
@@ -298,7 +319,7 @@
   }
 
   function closeDialog() {
-    if (running) { pushLog('解压进行中', 'warn'); return; }
+    if (running) { pushLog('解压中', 'warn'); return; }
     if (dlg) dlg.mask.style.display = 'none';
   }
 
@@ -349,10 +370,10 @@
     var opt = el('label', 'bdq-opt');
     var cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.checked = true;
-    cb.addEventListener('change', function () { flatMode = cb.checked; });
+    cb.checked = false;
+    cb.addEventListener('change', function () { flatMode = !cb.checked; });
     opt.appendChild(cb);
-    opt.appendChild(document.createTextNode('不新建同名文件夹'));
+    opt.appendChild(document.createTextNode('新建同名文件夹'));
     ft.appendChild(opt);
 
     var startBtn = el('button', 'bdq-primary', '开始解压');
@@ -376,7 +397,7 @@
     nfBtn.addEventListener('click', function () {
       var name = (nfInput.value || '').trim();
       if (!name) return pushLog('文件夹名称不能为空', 'warn');
-      if (/[\\/:*?"<>|]/.test(name)) return pushLog('名称包含非法字符', 'warn');
+      if (/[\\/:*?"<>|]/.test(name)) return pushLog('文件夹名称不能包含特殊字符', 'warn');
       nfBtn.disabled = true;
       createFolder(pickDir, name).then(function (r) {
         nfBtn.disabled = false;
@@ -385,7 +406,7 @@
           pickDir = join(pickDir, name);
           renderPath();
           loadFolders(pickDir);
-          pushLog('新建完成：' + pickDir, 'ok');
+          pushLog('新建完成', 'ok');
         } else {
           pushLog('新建失败：' + errText(r && r.errno), 'err');
         }
@@ -452,7 +473,7 @@
 
   function loadFolders(dir) {
     dlg.folders.innerHTML = '';
-    dlg.folders.appendChild(el('div', 'bdq-empty', '加载中'));
+    dlg.folders.appendChild(el('div', 'bdq-empty', '加载中…'));
     listDir(dir).then(function (r) {
       dlg.folders.innerHTML = '';
       if (!r || r.errno !== 0) {
@@ -499,10 +520,10 @@
     var deadline = Date.now() + 10 * 60 * 1000;
     return new Promise(function (resolve) {
       (function tick() {
-        if (Date.now() > deadline) return resolve({ ok: false, msg: '任务超时' });
+        if (Date.now() > deadline) return resolve({ ok: false, msg: '解压超时' });
         setTimeout(function () {
           taskQuery(taskid).then(function (q) {
-            if (!q || q.errno !== 0) return resolve({ ok: false, msg: '任务状态获取失败' });
+            if (!q || q.errno !== 0) return resolve({ ok: false, msg: '无法获取进度' });
             if (q.status === 'success') return resolve({ ok: true, ext: q.extra || {} });
             if (q.status === 'failed') return resolve({ ok: false, errno: q.task_errno, ext: q.extra || {} });
             tick();
@@ -524,18 +545,18 @@
     var okCount = 0, failCount = 0;
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
-      dlg.startBtn.textContent = '解压中 ' + (i + 1) + '/' + files.length;
+      dlg.startBtn.textContent = '解压中';
       pushLog('[' + (i + 1) + '/' + files.length + '] ' + f.name);
       try {
         var subs = flatMode ? await topLevelSubpaths(f.path) : [];
         if (subs === null) {
-          pushLog('顶层条目过多，改为整包解压', 'warn');
+          pushLog('包内条目过多，改为整体解压', 'warn');
           subs = [];
         }
         var res = await startUnzip(f.path, pickDir, subs);
         if (res.errno === 31180) { pushLog('失败：需要解压密码', 'err'); failCount++; continue; }
         if (res.errno !== 0) { pushLog('失败：' + errText(res.errno), 'err'); failCount++; continue; }
-        if (!res.taskid) { pushLog('已提交', 'ok'); okCount++; continue; }
+        if (!res.taskid) { pushLog('已提交解压', 'ok'); okCount++; continue; }
         var done = await waitTask(res.taskid);
         if (done.ok) {
           var n = (done.ext && (done.ext.success_num || done.ext.success_file_num)) || 0;
@@ -560,7 +581,7 @@
     running = false;
     dlg.startBtn.disabled = false;
     dlg.startBtn.textContent = '开始解压';
-    pushLog('完成：成功 ' + okCount + '，失败 ' + failCount, failCount ? 'warn' : 'ok');
+    pushLog(failCount ? '完成：成功 ' + okCount + '，失败 ' + failCount : '全部完成', failCount ? 'warn' : 'ok');
     if (okCount) {
       var refresh = el('button', 'bdq-plain', '刷新');
       refresh.style.marginLeft = '6px';
