@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         百度网盘 · 批量解压
 // @namespace    https://pan.baidu.com/
-// @version      5.0.0
-// @description  勾选压缩包后工具栏出现「批量解压」，选择或新建目标文件夹后一次性解压（默认平铺，不建同名文件夹）。
+// @version      5.1.0
+// @description  勾选压缩包，批量解压到指定文件夹。
 // @author       DSH
 // @match        https://pan.baidu.com/disk/*
 // @run-at       document-idle
@@ -37,7 +37,12 @@
     '31195': '压缩包已损坏',
     '31196': '暂不支持中文密码'
   };
-  function errText(c) { return ERRNO[String(c)] || ('未知错误 ' + c); }
+  function errText(c) {
+    var t = ERRNO[String(c)];
+    if (t) return t;
+    console.warn('[批量解压] 未收录错误码', c);
+    return '未知错误';
+  }
 
   // ---------------------------------------------------------------- 基础
   function currentDir() {
@@ -108,7 +113,7 @@
   }
   function startUnzip(zipPath, topath, subpaths) {
     return getToken().then(function (token) {
-      if (!token) throw new Error('拿不到 bdstoken');
+      if (!token) throw new Error('登录状态已失效');
       return apiGet('/api/zipfile/copy', {
         opera: 'unzip', bdstoken: token, topath: topath,
         path: zipPath, subpath: JSON.stringify(subpaths || []),
@@ -146,41 +151,63 @@
 
   // ---------------------------------------------------------------- 样式
   var CSS = [
-    '.bdq-btn{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 14px;margin-right:8px;',
-    'border:0;border-radius:16px;background:#3a6df0;color:#fff;font-size:13px;cursor:pointer;',
-    'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}',
-    '.bdq-btn:hover{background:#2f5cd6}',
-    '.bdq-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2147483000;display:flex;',
-    'align-items:center;justify-content:center;font:13px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}',
-    '.bdq-dlg{width:640px;max-height:82vh;display:flex;flex-direction:column;background:#fff;border-radius:10px;',
-    'box-shadow:0 16px 48px rgba(0,0,0,.3);overflow:hidden;color:#222}',
-    '.bdq-hd{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #eee;font-weight:600;font-size:15px}',
-    '.bdq-x{cursor:pointer;color:#999;font-size:18px;line-height:1}',
-    '.bdq-body{padding:12px 16px;overflow:auto}',
-    '.bdq-sec{margin-bottom:12px}',
-    '.bdq-lab{color:#666;font-size:12px;margin-bottom:6px}',
-    '.bdq-files{max-height:92px;overflow:auto;background:#f7f8fa;border-radius:6px;padding:6px 8px;font-size:12px;color:#444}',
-    '.bdq-file{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-    '.bdq-path{display:flex;align-items:center;gap:4px;flex-wrap:wrap;background:#f7f8fa;border-radius:6px;padding:6px 8px;font-size:12px}',
-    '.bdq-crumb{color:#3a6df0;cursor:pointer}',
-    '.bdq-crumb:hover{text-decoration:underline}',
-    '.bdq-sep{color:#bbb}',
-    '.bdq-folders{height:170px;overflow:auto;border:1px solid #eee;border-radius:6px;margin-top:8px}',
-    '.bdq-folder{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:13px}',
-    '.bdq-folder:hover{background:#f0f5ff}',
-    '.bdq-folder .bdq-ico{width:16px;text-align:center}',
+    // 工具栏按钮：取网盘原生文字按钮规格（#06a7ff / 14px / 700 / 32px / 透明底）
+    '.bdq-action{display:flex;align-items:center;flex:0 0 auto}',
+    '.bdq-btn{display:inline-flex;align-items:center;height:32px;margin:0;padding:0 12px;border:0;border-radius:3px;',
+    'background:transparent;color:#06a7ff;font:700 14px/14px SFUIText,PingFangSC-Regular,"Helvetica Neue",Helvetica,Arial,sans-serif;',
+    'white-space:nowrap;cursor:pointer;transition:color .1s}',
+    '.bdq-btn:hover{color:#38b9ff}',
+    '.bdq-btn:active{color:#0596e6}',
+    '.bdq-btn:focus-visible{outline:2px solid rgba(6,167,255,.35);outline-offset:-2px}',
+    '.bdq-btn>i{font-size:16px;margin-top:-2px;position:relative;top:2px}',
+    '.bdq-btn>span{margin-left:6px}',
+    // 弹窗：对齐原生对话框（12px 圆角、14px 粗体标题、48px 头部、#06a7ff 主色）
+    '.bdq-mask{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;',
+    'background:rgba(0,0,0,.5);font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}',
+    '.bdq-dlg{width:600px;max-width:calc(100vw - 32px);max-height:80vh;display:flex;flex-direction:column;background:#fff;border-radius:12px;',
+    'box-shadow:0 4px 24px rgba(3,11,26,.16);overflow:hidden;color:#606266}',
+    '.bdq-hd{display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 24px;',
+    'border-bottom:1px solid #f1f3f8;flex:0 0 auto}',
+    '.bdq-title{margin:0;font-size:14px;line-height:18px;font-weight:700;color:#303133}',
+    '.bdq-x{display:flex;align-items:center;justify-content:center;width:24px;height:24px;margin-right:-6px;',
+    'border:0;background:transparent;color:#979797;font-size:18px;line-height:1;cursor:pointer}',
+    '.bdq-x:hover{color:#06a7ff}',
+    '.bdq-body{padding:20px 24px 8px;overflow:auto}',
+    '.bdq-sec{margin-bottom:16px}',
+    '.bdq-lab{margin-bottom:8px;font-size:13px;color:#606266}',
+    '.bdq-files{max-height:88px;padding:6px 10px;overflow:auto;border-radius:4px;background:#f7f8fa;font-size:12px;color:#606266}',
+    '.bdq-file{line-height:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.bdq-path{display:flex;align-items:center;flex-wrap:wrap;padding:4px 10px;border:1px solid #ebeef5;border-radius:4px;font-size:12px;line-height:20px}',
+    '.bdq-crumb{color:#06a7ff;cursor:pointer}',
+    '.bdq-crumb:hover{color:#38b9ff}',
+    '.bdq-crumb.is-current{color:#303133;cursor:default}',
+    '.bdq-crumb.is-current:hover{color:#303133}',
+    '.bdq-sep{padding:0 2px;color:#c0c4cc}',
+    '.bdq-folders{height:176px;margin-top:8px;overflow:auto;border:1px solid #ebeef5;border-radius:4px}',
+    '.bdq-folder{display:flex;align-items:center;height:32px;padding:0 10px;font-size:13px;color:#606266;cursor:pointer}',
+    '.bdq-folder>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
+    '.bdq-folder:hover{background:#f0faff}',
+    '.bdq-ico{width:16px;height:16px;margin-right:8px;flex:0 0 auto;color:#06a7ff;',
+    'display:flex;align-items:center;justify-content:center}',
+    '.bdq-ico svg{display:block;width:16px;height:16px}',
+    '.bdq-ico-up{color:#909399;font-size:12px}',
+    '.bdq-empty{padding:6px 10px;font-size:12px;color:#c0c4cc}',
     '.bdq-new{display:flex;gap:8px;margin-top:8px}',
-    '.bdq-new input{flex:1;height:30px;border:1px solid #ddd;border-radius:6px;padding:0 8px;font-size:13px;outline:none}',
-    '.bdq-new input:focus{border-color:#3a6df0}',
-    '.bdq-new button{height:30px;padding:0 12px;border:1px solid #3a6df0;border-radius:6px;background:#fff;color:#3a6df0;cursor:pointer;font-size:13px}',
-    '.bdq-ft{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid #eee}',
-    '.bdq-ft .bdq-opt{display:flex;align-items:center;gap:4px;color:#555;font-size:12px;cursor:pointer}',
-    '.bdq-primary{margin-left:auto;height:32px;padding:0 18px;border:0;border-radius:6px;background:#3a6df0;color:#fff;cursor:pointer;font-size:13px}',
-    '.bdq-primary:disabled{background:#c3cfe8;cursor:not-allowed}',
-    '.bdq-plain{height:32px;padding:0 14px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-size:13px}',
-    '.bdq-log{max-height:120px;overflow:auto;border-top:1px solid #eee;padding:8px 16px;font-size:12px;color:#444;',
-    'font-family:ui-monospace,Menlo,Consolas,monospace;background:#fafbfc}',
-    '.bdq-ok{color:#18a058}.bdq-err{color:#d03050}.bdq-warn{color:#c27c0e}'
+    '.bdq-new input{flex:1;height:32px;padding:0 10px;border:1px solid #dcdfe6;border-radius:4px;font-size:13px;color:#303133;outline:0}',
+    '.bdq-new input:focus{border-color:#06a7ff}',
+    '.bdq-new button{height:32px;padding:0 14px;border:1px solid #06a7ff;border-radius:4px;background:#fff;color:#06a7ff;font-size:13px;cursor:pointer}',
+    '.bdq-new button:hover{background:#e6f6ff;border-color:#b4e5ff}',
+    '.bdq-ft{display:flex;align-items:center;gap:12px;padding:14px 24px 20px;border-top:1px solid #f1f3f8}',
+    '.bdq-opt{display:flex;align-items:center;gap:6px;font-size:13px;color:#606266;cursor:pointer}',
+    '.bdq-opt input{width:14px;height:14px;margin:0;accent-color:#06a7ff}',
+    '.bdq-primary{margin-left:auto;height:32px;padding:0 20px;border:0;border-radius:4px;background:#06a7ff;color:#fff;font-size:14px;cursor:pointer}',
+    '.bdq-primary:hover{background:#38b9ff}',
+    '.bdq-primary:disabled{background:#83d3ff;cursor:not-allowed}',
+    '.bdq-plain{height:32px;padding:0 20px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;color:#606266;font-size:14px;cursor:pointer}',
+    '.bdq-plain:hover{color:#06a7ff;border-color:#b4e5ff;background:#e6f6ff}',
+    '.bdq-log{display:none;max-height:120px;overflow:auto;padding:8px 24px;border-top:1px solid #f1f3f8;',
+    'background:#fafbfc;font:12px/20px ui-monospace,Menlo,Consolas,monospace;color:#606266}',
+    '.bdq-ok{color:#0bd6a7}.bdq-err{color:#ff436a}.bdq-warn{color:#e6a23c}'
   ].join('');
 
   function injectCss() {
@@ -192,47 +219,62 @@
   }
 
   // ---------------------------------------------------------------- 工具栏按钮
-  var toolbarBtn = null;
+  var toolbarWrap = null;
   var lastCount = -1;
 
-  function findToolbar() {
+  // 原生选中工具栏的动作组；结构变化时退回整条工具栏
+  function findActionGroup() {
     var bar = document.querySelector('.wp-s-agile-tool-bar__header.is-header-tool');
-    if (bar) return bar;
-    var btn = null;
-    var all = document.querySelectorAll('button');
-    for (var i = 0; i < all.length; i++) {
-      if (/云解压|分享|下载/.test(all[i].innerText || '')) { btn = all[i]; break; }
-    }
-    return btn ? btn.parentElement : null;
+    if (!bar) return null;
+    return bar.querySelector('.wp-s-agile-tool-bar__h-button-group.is-list') ||
+           bar.querySelector('.wp-s-agile-tool-bar__h-button-group') ||
+           bar;
+  }
+
+  function makeToolbarButton() {
+    var btn = el('button', 'bdq-btn u-button u-button--text u-button--small wp-s-agile-tool-bar__h-action-button');
+    btn.type = 'button';
+    btn.title = '批量解压';
+    var ico = el('i', 'u-icon u-icon-unzip');
+    ico.setAttribute('aria-hidden', 'true');
+    var label = el('span', '', '批量解压');
+    btn.appendChild(ico);
+    btn.appendChild(label);
+    btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openDialog();
+    });
+    btn.__label = label;
+    return btn;
+  }
+
+  function removeToolbarButton() {
+    if (toolbarWrap && toolbarWrap.parentNode) toolbarWrap.parentNode.removeChild(toolbarWrap);
+    toolbarWrap = null;
+    lastCount = -1;
   }
 
   function syncToolbar() {
     injectCss();
     var selected = collectSelected();
-    var bar = findToolbar();
+    var group = findActionGroup();
 
-    if (!bar || !selected.length) {
-      if (toolbarBtn && toolbarBtn.parentNode) toolbarBtn.parentNode.removeChild(toolbarBtn);
-      toolbarBtn = null;
-      lastCount = -1;
+    if (!group || !selected.length) {
+      removeToolbarButton();
       return;
     }
-    if (!toolbarBtn) {
-      toolbarBtn = document.createElement('button');
-      toolbarBtn.className = 'bdq-btn';
-      toolbarBtn.type = 'button';
-      toolbarBtn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-      toolbarBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        openDialog();
-      });
+    if (!toolbarWrap) {
+      toolbarWrap = el('div', 'bdq-action wp-s-agile-tool-bar__h-action is-need-left-sep is-list');
+      toolbarWrap.appendChild(makeToolbarButton());
     }
-    if (selected.length !== lastCount || !toolbarBtn.isConnected) {
-      toolbarBtn.textContent = '批量解压(' + selected.length + ')';
+    // 网盘每次勾选都会重绘工具栏，节点被清掉就放回动作组末尾
+    if (toolbarWrap.parentNode !== group) group.appendChild(toolbarWrap);
+    if (selected.length !== lastCount) {
+      toolbarWrap.firstChild.__label.textContent = '批量解压（' + selected.length + '）';
       lastCount = selected.length;
     }
-    if (!toolbarBtn.isConnected) bar.insertBefore(toolbarBtn, bar.firstChild);
   }
 
   // ---------------------------------------------------------------- 对话框
@@ -256,7 +298,7 @@
   }
 
   function closeDialog() {
-    if (running) { pushLog('正在解压，先等它跑完', 'warn'); return; }
+    if (running) { pushLog('解压进行中', 'warn'); return; }
     if (dlg) dlg.mask.style.display = 'none';
   }
 
@@ -264,10 +306,15 @@
     var mask = el('div', 'bdq-mask');
     mask.style.display = 'none';
     var box = el('div', 'bdq-dlg');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', '批量解压');
 
     var hd = el('div', 'bdq-hd');
-    hd.appendChild(el('span', '', '批量解压'));
-    var x = el('span', 'bdq-x', '×');
+    hd.appendChild(el('h3', 'bdq-title', '批量解压'));
+    var x = el('button', 'bdq-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', '关闭');
     x.addEventListener('click', closeDialog);
     hd.appendChild(x);
 
@@ -280,7 +327,7 @@
     body.appendChild(filesSec);
 
     var tgtSec = el('div', 'bdq-sec');
-    tgtSec.appendChild(el('div', 'bdq-lab', '解压到（点击文件夹进入）'));
+    tgtSec.appendChild(el('div', 'bdq-lab', '解压到'));
     var pathBox = el('div', 'bdq-path');
     tgtSec.appendChild(pathBox);
     var folders = el('div', 'bdq-folders');
@@ -288,8 +335,8 @@
 
     var nf = el('div', 'bdq-new');
     var nfInput = el('input');
-    nfInput.placeholder = '新建文件夹名称（创建在当前目录下）';
-    var nfBtn = el('button', '', '新建并进入');
+    nfInput.placeholder = '新建文件夹';
+    var nfBtn = el('button', '', '新建');
     nf.appendChild(nfInput);
     nf.appendChild(nfBtn);
     tgtSec.appendChild(nf);
@@ -305,7 +352,7 @@
     cb.checked = true;
     cb.addEventListener('change', function () { flatMode = cb.checked; });
     opt.appendChild(cb);
-    opt.appendChild(document.createTextNode('平铺到目标文件夹（不建同名文件夹）'));
+    opt.appendChild(document.createTextNode('不新建同名文件夹'));
     ft.appendChild(opt);
 
     var startBtn = el('button', 'bdq-primary', '开始解压');
@@ -322,10 +369,13 @@
     document.body.appendChild(mask);
 
     mask.addEventListener('click', function (e) { if (e.target === mask) closeDialog(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && mask.style.display !== 'none') closeDialog();
+    });
 
     nfBtn.addEventListener('click', function () {
       var name = (nfInput.value || '').trim();
-      if (!name) return pushLog('请输入文件夹名称', 'warn');
+      if (!name) return pushLog('文件夹名称不能为空', 'warn');
       if (/[\\/:*?"<>|]/.test(name)) return pushLog('名称包含非法字符', 'warn');
       nfBtn.disabled = true;
       createFolder(pickDir, name).then(function (r) {
@@ -335,13 +385,13 @@
           pickDir = join(pickDir, name);
           renderPath();
           loadFolders(pickDir);
-          pushLog('已进入 ' + pickDir, 'ok');
+          pushLog('新建完成：' + pickDir, 'ok');
         } else {
           pushLog('新建失败：' + errText(r && r.errno), 'err');
         }
-      }).catch(function (e) {
+      }).catch(function () {
         nfBtn.disabled = false;
-        pushLog('新建失败：' + e, 'err');
+        pushLog('新建失败：网络异常', 'err');
       });
     });
 
@@ -351,6 +401,7 @@
   function pushLog(msg, kind) {
     if (!dlg) return;
     var line = el('div', 'bdq-' + (kind || ''), '[' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '] ' + msg);
+    dlg.log.style.display = 'block';
     dlg.log.appendChild(line);
     dlg.log.scrollTop = dlg.log.scrollHeight;
   }
@@ -359,7 +410,7 @@
     var list = collectSelected();
     dlg.filesBox.innerHTML = '';
     if (!list.length) {
-      dlg.filesBox.appendChild(el('div', 'bdq-file', '（没有选中压缩包）'));
+      dlg.filesBox.appendChild(el('div', 'bdq-empty', '未选择压缩包'));
       return;
     }
     list.forEach(function (f) {
@@ -370,62 +421,68 @@
   function renderPath() {
     dlg.pathBox.innerHTML = '';
     var parts = pickDir === '/' ? [] : pickDir.split('/').filter(Boolean);
-    var root = el('span', 'bdq-crumb', '根目录');
-    root.addEventListener('click', function () { pickDir = '/'; renderPath(); loadFolders(pickDir); });
+    var root = el('span', 'bdq-crumb' + (parts.length ? '' : ' is-current'), '全部文件');
+    if (parts.length) {
+      root.addEventListener('click', function () { pickDir = '/'; renderPath(); loadFolders(pickDir); });
+    }
     dlg.pathBox.appendChild(root);
     var cur = '';
-    parts.forEach(function (p) {
+    parts.forEach(function (p, idx) {
       cur += '/' + p;
-      var sep = el('span', 'bdq-sep', '>');
-      dlg.pathBox.appendChild(sep);
-      var c = el('span', 'bdq-crumb', p);
-      var target = cur;
-      c.addEventListener('click', function () {
-        pickDir = target; renderPath(); loadFolders(pickDir);
-      });
+      dlg.pathBox.appendChild(el('span', 'bdq-sep', '/'));
+      var c = el('span', 'bdq-crumb' + (idx === parts.length - 1 ? ' is-current' : ''), p);
+      if (idx < parts.length - 1) {
+        var target = cur;
+        c.addEventListener('click', function () {
+          pickDir = target; renderPath(); loadFolders(pickDir);
+        });
+      }
       dlg.pathBox.appendChild(c);
     });
   }
 
+  var FOLDER_SVG = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+    '<path d="M1.9 4.4c0-.62.5-1.12 1.12-1.12h2.9l1.3 1.5h5.76c.62 0 1.12.5 1.12 1.12v5.68c0 .62-.5 1.12-1.12 1.12H3.02c-.62 0-1.12-.5-1.12-1.12V4.4Z" ' +
+    'stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+  function folderIcon() {
+    var i = el('span', 'bdq-ico');
+    i.innerHTML = FOLDER_SVG;
+    return i;
+  }
+
   function loadFolders(dir) {
     dlg.folders.innerHTML = '';
-    dlg.folders.appendChild(el('div', 'bdq-folder', '加载中…'));
+    dlg.folders.appendChild(el('div', 'bdq-empty', '加载中'));
     listDir(dir).then(function (r) {
       dlg.folders.innerHTML = '';
       if (!r || r.errno !== 0) {
-        dlg.folders.appendChild(el('div', 'bdq-folder', '读取失败：' + errText(r && r.errno)));
+        dlg.folders.appendChild(el('div', 'bdq-empty', '加载失败：' + errText(r && r.errno)));
         return;
       }
       var dirs = (r.list || []).filter(function (x) { return x.isdir === 1; });
-      if (dir === '/') {
+      if (dir !== '/') {
         var up = el('div', 'bdq-folder');
-        up.appendChild(el('span', 'bdq-ico', '↖'));
-        up.appendChild(el('span', '', '（当前是根目录）'));
-        up.style.color = '#bbb';
-        dlg.folders.appendChild(up);
-      } else {
-        var up2 = el('div', 'bdq-folder');
-        up2.appendChild(el('span', 'bdq-ico', '↖'));
-        up2.appendChild(el('span', '', '上一级'));
-        up2.addEventListener('click', function () {
+        up.appendChild(el('span', 'bdq-ico bdq-ico-up', '↑'));
+        up.appendChild(el('span', '', '上一级'));
+        up.addEventListener('click', function () {
           var p = dir.replace(/\/[^/]+$/, '') || '/';
           pickDir = p; renderPath(); loadFolders(p);
         });
-        dlg.folders.appendChild(up2);
+        dlg.folders.appendChild(up);
       }
       dirs.forEach(function (d) {
         var row = el('div', 'bdq-folder');
-        row.appendChild(el('span', 'bdq-ico', '📁'));
+        row.appendChild(folderIcon());
         row.appendChild(el('span', '', d.server_filename));
         row.addEventListener('click', function () {
           pickDir = d.path; renderPath(); loadFolders(pickDir);
         });
         dlg.folders.appendChild(row);
       });
-      if (!dirs.length) dlg.folders.appendChild(el('div', 'bdq-folder', '（没有子文件夹）'));
-    }).catch(function (e) {
+      if (!dirs.length) dlg.folders.appendChild(el('div', 'bdq-empty', '暂无子文件夹'));
+    }).catch(function () {
       dlg.folders.innerHTML = '';
-      dlg.folders.appendChild(el('div', 'bdq-folder', '读取失败：' + e));
+      dlg.folders.appendChild(el('div', 'bdq-empty', '加载失败：网络异常'));
     });
   }
 
@@ -442,10 +499,10 @@
     var deadline = Date.now() + 10 * 60 * 1000;
     return new Promise(function (resolve) {
       (function tick() {
-        if (Date.now() > deadline) return resolve({ ok: false, msg: '等待超时' });
+        if (Date.now() > deadline) return resolve({ ok: false, msg: '任务超时' });
         setTimeout(function () {
           taskQuery(taskid).then(function (q) {
-            if (!q || q.errno !== 0) return resolve({ ok: false, msg: '查询任务失败' });
+            if (!q || q.errno !== 0) return resolve({ ok: false, msg: '任务状态获取失败' });
             if (q.status === 'success') return resolve({ ok: true, ext: q.extra || {} });
             if (q.status === 'failed') return resolve({ ok: false, errno: q.task_errno, ext: q.extra || {} });
             tick();
@@ -458,38 +515,43 @@
   async function runAll() {
     if (running) return;
     var files = collectSelected();
-    if (!files.length) return pushLog('没有选中压缩包', 'warn');
+    if (!files.length) return pushLog('未选择压缩包', 'warn');
 
     running = true;
     dlg.startBtn.disabled = true;
-    dlg.startBtn.textContent = '解压中…';
+    dlg.startBtn.textContent = '解压中';
 
     var okCount = 0, failCount = 0;
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
-      dlg.startBtn.textContent = '解压中… ' + (i + 1) + '/' + files.length;
+      dlg.startBtn.textContent = '解压中 ' + (i + 1) + '/' + files.length;
       pushLog('[' + (i + 1) + '/' + files.length + '] ' + f.name);
       try {
         var subs = flatMode ? await topLevelSubpaths(f.path) : [];
         if (subs === null) {
-          pushLog('  包内顶层条目过多，改为建同名文件夹', 'warn');
+          pushLog('顶层条目过多，改为整包解压', 'warn');
           subs = [];
         }
         var res = await startUnzip(f.path, pickDir, subs);
-        if (res.errno === 31180) { pushLog('  ✗ 需要解压密码，跳过', 'err'); failCount++; continue; }
-        if (res.errno !== 0) { pushLog('  ✗ ' + errText(res.errno), 'err'); failCount++; continue; }
-        if (!res.taskid) { pushLog('  ✓ 已提交', 'ok'); okCount++; continue; }
+        if (res.errno === 31180) { pushLog('失败：需要解压密码', 'err'); failCount++; continue; }
+        if (res.errno !== 0) { pushLog('失败：' + errText(res.errno), 'err'); failCount++; continue; }
+        if (!res.taskid) { pushLog('已提交', 'ok'); okCount++; continue; }
         var done = await waitTask(res.taskid);
         if (done.ok) {
           var n = (done.ext && (done.ext.success_num || done.ext.success_file_num)) || 0;
-          pushLog('  ✓ 完成' + (n ? '，' + n + ' 个文件' : ''), 'ok');
+          pushLog('完成' + (n ? '，' + n + ' 个文件' : ''), 'ok');
           okCount++;
         } else {
-          pushLog('  ✗ ' + (done.errno ? errText(done.errno) : done.msg), 'err');
+          pushLog('失败：' + (done.errno ? errText(done.errno) : done.msg), 'err');
           failCount++;
         }
       } catch (e) {
-        pushLog('  ✗ 异常：' + (e && e.message ? e.message : e), 'err');
+        if (e && /[\u4e00-\u9fa5]/.test(e.message || '')) {
+          pushLog('失败：' + e.message, 'err');
+        } else {
+          console.warn('[批量解压] 解压失败', e);
+          pushLog('失败：网络异常', 'err');
+        }
         failCount++;
       }
       if (i < files.length - 1) await new Promise(function (r) { setTimeout(r, 800); });
@@ -498,9 +560,9 @@
     running = false;
     dlg.startBtn.disabled = false;
     dlg.startBtn.textContent = '开始解压';
-    pushLog('===== 结束：成功 ' + okCount + '，失败 ' + failCount + ' =====', failCount ? 'warn' : 'ok');
+    pushLog('完成：成功 ' + okCount + '，失败 ' + failCount, failCount ? 'warn' : 'ok');
     if (okCount) {
-      var refresh = el('button', 'bdq-plain', '刷新页面');
+      var refresh = el('button', 'bdq-plain', '刷新');
       refresh.style.marginLeft = '6px';
       refresh.addEventListener('click', function () { location.reload(); });
       dlg.log.appendChild(refresh);
