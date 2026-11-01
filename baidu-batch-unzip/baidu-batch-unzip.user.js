@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         百度网盘批量解压
 // @namespace    pan.baidu.com
-// @version      5.2.1
+// @version      5.2.2
 // @description  勾选压缩包，批量解压到指定文件夹。
 // @author       zc
 // @license      GPL-3.0-or-later
@@ -219,9 +219,9 @@
     '.bdq-new button{height:32px;padding:0 14px;border:1px solid #06a7ff;border-radius:4px;background:#fff;color:#06a7ff;font-size:13px;cursor:pointer}',
     '.bdq-new button:hover{background:#e6f6ff;border-color:#b4e5ff}',
     '.bdq-ft{display:flex;align-items:center;gap:12px;padding:14px 24px 20px;border-top:1px solid #f1f3f8}',
-    '.bdq-opt{display:flex;align-items:center;gap:6px;font-size:13px;color:#606266;cursor:pointer}',
+    '.bdq-opt{display:flex;align-items:center;gap:6px;margin-right:auto;font-size:13px;color:#606266;cursor:pointer}',
     '.bdq-opt input{width:14px;height:14px;margin:0;accent-color:#06a7ff}',
-    '.bdq-primary{margin-left:auto;height:32px;padding:0 20px;border:0;border-radius:4px;background:#06a7ff;color:#fff;font-size:14px;cursor:pointer}',
+    '.bdq-primary{height:32px;padding:0 20px;border:0;border-radius:4px;background:#06a7ff;color:#fff;font-size:14px;cursor:pointer}',
     '.bdq-primary:hover{background:#38b9ff}',
     '.bdq-primary:disabled{background:#83d3ff;cursor:not-allowed}',
     '.bdq-plain{height:32px;padding:0 20px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;color:#606266;font-size:14px;cursor:pointer}',
@@ -378,9 +378,14 @@
 
     var startBtn = el('button', 'bdq-primary', '开始解压');
     var cancelBtn = el('button', 'bdq-plain', '取消');
+    var refreshBtn = el('button', 'bdq-plain', '刷新');
+    refreshBtn.type = 'button';
+    refreshBtn.style.display = 'none';
     cancelBtn.addEventListener('click', closeDialog);
+    refreshBtn.addEventListener('click', function () { location.reload(); });
     startBtn.addEventListener('click', runAll);
     ft.appendChild(cancelBtn);
+    ft.appendChild(refreshBtn);
     ft.appendChild(startBtn);
 
     box.appendChild(hd);
@@ -416,7 +421,7 @@
       });
     });
 
-    return { mask: mask, filesBox: filesBox, pathBox: pathBox, folders: folders, log: logBox, startBtn: startBtn };
+    return { mask: mask, filesBox: filesBox, pathBox: pathBox, folders: folders, log: logBox, startBtn: startBtn, refreshBtn: refreshBtn };
   }
 
   function pushLog(msg, kind) {
@@ -541,6 +546,7 @@
     running = true;
     dlg.startBtn.disabled = true;
     dlg.startBtn.textContent = '解压中';
+    dlg.refreshBtn.style.display = 'none';
 
     var okCount = 0, failCount = 0;
     for (var i = 0; i < files.length; i++) {
@@ -582,13 +588,7 @@
     dlg.startBtn.disabled = false;
     dlg.startBtn.textContent = '开始解压';
     pushLog(failCount ? '完成：成功 ' + okCount + '，失败 ' + failCount : '全部完成', failCount ? 'warn' : 'ok');
-    if (okCount) {
-      var refresh = el('button', 'bdq-plain', '刷新');
-      refresh.style.marginLeft = '6px';
-      refresh.addEventListener('click', function () { location.reload(); });
-      dlg.log.appendChild(refresh);
-      dlg.log.scrollTop = dlg.log.scrollHeight;
-    }
+    if (okCount) dlg.refreshBtn.style.display = '';
   }
 
   // ---------------------------------------------------------------- 启动
