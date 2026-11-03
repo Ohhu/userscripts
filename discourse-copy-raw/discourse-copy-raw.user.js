@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Markdown 原文复制
 // @namespace    discourse-copy-raw
-// @version      4.0.1
+// @version      4.1.0
 // @description  Discourse 帖子复制 Markdown 原文，图片替换为直链，可发布到 Memos
 // @match        https://linux.do/*
 // @author       Ohhu
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '4.0.1';
+    const SCRIPT_VERSION = '4.1.0';
     const PENDING_KEY = 'MDRC_PENDING_COPY';
     let timer = null;
 
@@ -295,12 +295,9 @@
 
     /* ---------------- Memos 对接 ---------------- */
 
-    // Memos 26.10 起取消了 API 的 v1 版本号：REST 路由由 /api/v1/memos 改为 /api/memos，
-    // 旧路由在该版本返回 410 Gone，下一个版本会彻底移除。CreateMemo 的请求体直接是
-    // Memo 消息本身，创建时 state 会被服务端忽略（新建恒为 NORMAL），
-    // 因此只需提交 content 与 visibility 两个字段。
+    // 26.10 起 REST 路由不再带 v1（/api/memos）。CreateMemo 的请求体就是 Memo 消息本身，
+    // 创建时 state 被忽略（新建恒为 NORMAL），因此只提交 content 与 visibility。
     const MEMO_PATH = '/api/memos';
-    const LEGACY_MEMO_PATH = '/api/v1/memos';
     const CURRENT_USER_PATH = '/api/auth/me';
     const TOKEN_INVALID_MSG = '令牌无效或已过期，请在「设置 → 访问令牌」重新创建';
 
@@ -346,10 +343,6 @@
 
     function pathMissing(res) {
         return res.status === 404 || res.status === 405 || res.status === 410;
-    }
-
-    function looksLikeHtml(res) {
-        return String(res.responseText || '').trim().charAt(0) === '<';
     }
 
     function parseJsonObject(text) {
@@ -412,7 +405,7 @@
 
     // Memos 的失败响应是 gRPC 错误映射：{ code, message, details:[ErrorInfo] }；
     // 限流与用量上限都落在 429 上，需要按 details 里的 reason 与 metric 区分。
-    function memosErrorMessage(status, text, triedPaths) {
+    function memosErrorMessage(status, text) {
         const info = memosErrorInfo(text);
         const hideRaw = /^API v1 has been removed/i.test(info.message);
         // 已识别的 reason 已经说清问题，不再追加服务端原文。
@@ -434,8 +427,7 @@
             return 'Memos 限流' + (info.retryAfter ? '，约 ' + info.retryAfter + ' 秒后可重试' : '，请稍后再试');
         }
         if (status === 404 || status === 405 || status === 410) {
-            const paths = triedPaths && triedPaths.length ? triedPaths.join('、') : MEMO_PATH;
-            return '未找到 Memos 接口（' + paths + '）。请确认地址指向 Memos 26.10 或更高版本';
+            return '未找到 Memos 接口（' + MEMO_PATH + '）。请确认地址指向 Memos 26.10 或更高版本';
         }
         if (status === 413) return '内容过长，Memos 拒绝接收' + suffix;
         if (status >= 500) return 'Memos 服务端异常（HTTP ' + status + '）' + suffix;
@@ -446,46 +438,30 @@
     async function publishToMemos(content) {
         const config = await getMemosConfig();
         if (!config) return null;
-        const payload = { content, visibility: 'PRIVATE' };
-        const tried = [];
-        for (const path of [MEMO_PATH, LEGACY_MEMO_PATH]) {
-            tried.push(path);
-            const res = await memosRequest(config, path, { method: 'POST', body: payload });
-            const isOk = res.status >= 200 && res.status < 300;
-            const memo = isOk ? parseJsonObject(res.responseText) : null;
+        const res = await memosRequest(config, MEMO_PATH, { method: 'POST', body: { content, visibility: 'PRIVATE' } });
+        if (res.status >= 200 && res.status < 300) {
+            const memo = parseJsonObject(res.responseText);
             const uid = memo ? memoUidFrom(memo.name) : '';
-            if (uid) {
-                const legacy = path === LEGACY_MEMO_PATH;
-                return { uid, url: config.host + (legacy ? '/m/' : '/memos/') + uid };
-            }
-            if (isOk) {
-                // 只有确认是网页回退时才换路径重发；其余情况绝不重复提交非幂等请求。
-                if (!memo && looksLikeHtml(res) && path === MEMO_PATH) continue;
-                if (memo) throw new MemosError('没有拿到备忘信息，请到实例确认是否已创建', { config: true });
-                throw new MemosError('该地址没有返回 Memos 数据，请检查地址与子路径', { config: true });
-            }
-            // 新版实例没有旧路由、旧版实例没有新路由，只在“路径不存在”时才换下一个。
-            if (path === MEMO_PATH && pathMissing(res)) continue;
-            const auth = res.status === 401;
-            throw new MemosError(memosErrorMessage(res.status, res.responseText, tried), {
-                auth,
-                config: auth || pathMissing(res),
-            });
+            if (uid) return { uid, url: config.host + '/memos/' + uid };
+            if (memo) throw new MemosError('没有拿到备忘信息，请到实例确认是否已创建', { config: true });
+            throw new MemosError('该地址没有返回 Memos 数据，请检查地址与子路径', { config: true });
         }
-        throw new MemosError(memosErrorMessage(404, '', tried), { config: true });
+        const auth = res.status === 401;
+        throw new MemosError(memosErrorMessage(res.status, res.responseText), {
+            auth,
+            config: auth || pathMissing(res),
+        });
     }
 
     async function verifyMemosConfig(config) {
         const res = await memosRequest(config, CURRENT_USER_PATH, {});
-        // 旧版实例没有该接口：JSON 404 视为版本差异跳过校验，HTML 404 说明地址不对。
-        if (pathMissing(res) && !looksLikeHtml(res)) return { username: '', skipped: true };
         if (res.status >= 200 && res.status < 300) {
             const data = parseJsonObject(res.responseText);
             if (!data || !data.user) throw new MemosError('该地址没有返回 Memos 数据，请检查地址与子路径', { config: true });
             return { username: String(data.user.username || '') };
         }
         if (res.status === 401) throw new MemosError(TOKEN_INVALID_MSG, { auth: true });
-        if (looksLikeHtml(res)) throw new MemosError('该地址没有返回 Memos 数据，请检查地址与子路径', { config: true });
+        if (pathMissing(res)) throw new MemosError('未找到 Memos 接口（' + CURRENT_USER_PATH + '），请确认实例版本', { config: true });
         throw new MemosError('实例响应异常（HTTP ' + res.status + '）');
     }
 
@@ -547,8 +523,7 @@
                 if (!host || !token) return;
                 try {
                     const account = await verifyMemosConfig({ host, token });
-                    if (account.skipped) showToast('已保存，该实例不支持校验', 'info', null, 3200);
-                    else showToast(account.username ? '已连接：' + account.username : '已保存', 'info', null, 3200);
+                    showToast(account.username ? '已连接：' + account.username : '已保存', 'info', null, 3200);
                 } catch (err) {
                     console.error('[CopyRaw] 连接 Memos 失败：', err);
                     const message = err && err.message ? err.message : '连接 Memos 失败';
