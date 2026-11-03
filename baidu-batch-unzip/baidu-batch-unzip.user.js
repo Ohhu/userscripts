@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         百度网盘批量解压
 // @namespace    pan.baidu.com
-// @version      5.2.2
+// @version      5.2.3
 // @description  勾选压缩包，批量解压到指定文件夹。
-// @author       zc
+// @author       Ohhu
 // @license      GPL-3.0-or-later
 // @match        https://pan.baidu.com/disk/*
 // @run-at       document-idle
@@ -12,7 +12,7 @@
 
 /*
  * 百度网盘批量解压
- * Copyright (C) 2026 zc
+ * Copyright (C) 2026 Ohhu
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,16 +39,16 @@
   var ERRNO = {
     '2': '参数错误',
     '-6': '登录失效，请刷新页面重新登录',
-    '-8': '目标目录已有同名项',
+    '-8': '目标目录已有同名文件',
     '-9': '包内条目不存在',
-    '111': '还有未完成的任务',
+    '111': '有未完成的任务',
     '132': '需要身份验证',
-    '31061': '目标目录已存在同名文件',
+    '31061': '目标目录已有同名文件',
     '31180': '需要解压密码',
-    '31181': '压缩文件内容过多，建议下载后解压',
-    '31182': '压缩文件损坏或不完整',
+    '31181': '压缩包内容过多，建议下载后解压',
+    '31182': '压缩包损坏或不完整',
     '31183': '压缩包过大，暂不支持云解压',
-    '31184': '暂无法为您解压此类压缩包',
+    '31184': '暂不支持此类压缩包',
     '31185': '系统繁忙，请稍后再试',
     '31186': '压缩包内文件过多',
     '31188': '暂不支持解压 8G 以上文件',
@@ -62,7 +62,7 @@
     var t = ERRNO[String(c)];
     if (t) return t;
     console.warn('[批量解压] 未收录错误码', c);
-    return '未知错误';
+    return '未知错误（' + c + '）';
   }
 
   // ---------------------------------------------------------------- 基础
@@ -134,7 +134,7 @@
   }
   function startUnzip(zipPath, topath, subpaths) {
     return getToken().then(function (token) {
-      if (!token) throw new Error('登录已失效');
+      if (!token) throw new Error('登录已失效，请刷新页面重新登录');
       return apiGet('/api/zipfile/copy', {
         opera: 'unzip', bdstoken: token, topath: topath,
         path: zipPath, subpath: JSON.stringify(subpaths || []),
@@ -319,7 +319,7 @@
   }
 
   function closeDialog() {
-    if (running) { pushLog('解压中', 'warn'); return; }
+    if (running) { pushLog('解压中，结束后才能关闭', 'warn'); return; }
     if (dlg) dlg.mask.style.display = 'none';
   }
 
@@ -373,7 +373,7 @@
     cb.checked = false;
     cb.addEventListener('change', function () { flatMode = !cb.checked; });
     opt.appendChild(cb);
-    opt.appendChild(document.createTextNode('新建同名文件夹'));
+    opt.appendChild(document.createTextNode('每个压缩包解压到同名文件夹'));
     ft.appendChild(opt);
 
     var startBtn = el('button', 'bdq-primary', '开始解压');
@@ -525,10 +525,10 @@
     var deadline = Date.now() + 10 * 60 * 1000;
     return new Promise(function (resolve) {
       (function tick() {
-        if (Date.now() > deadline) return resolve({ ok: false, msg: '解压超时' });
+        if (Date.now() > deadline) return resolve({ ok: false, msg: '解压超时，请稍后刷新查看' });
         setTimeout(function () {
           taskQuery(taskid).then(function (q) {
-            if (!q || q.errno !== 0) return resolve({ ok: false, msg: '无法获取进度' });
+            if (!q || q.errno !== 0) return resolve({ ok: false, msg: '无法获取进度，请稍后刷新查看' });
             if (q.status === 'success') return resolve({ ok: true, ext: q.extra || {} });
             if (q.status === 'failed') return resolve({ ok: false, errno: q.task_errno, ext: q.extra || {} });
             tick();
@@ -548,7 +548,7 @@
     dlg.startBtn.textContent = '解压中';
     dlg.refreshBtn.style.display = 'none';
 
-    var okCount = 0, failCount = 0;
+    var okCount = 0, failCount = 0, sentCount = 0;
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       dlg.startBtn.textContent = '解压中';
@@ -556,13 +556,13 @@
       try {
         var subs = flatMode ? await topLevelSubpaths(f.path) : [];
         if (subs === null) {
-          pushLog('包内条目过多，改为整体解压', 'warn');
+          pushLog('包内条目过多，改为整包解压', 'warn');
           subs = [];
         }
         var res = await startUnzip(f.path, pickDir, subs);
         if (res.errno === 31180) { pushLog('失败：需要解压密码', 'err'); failCount++; continue; }
         if (res.errno !== 0) { pushLog('失败：' + errText(res.errno), 'err'); failCount++; continue; }
-        if (!res.taskid) { pushLog('已提交解压', 'ok'); okCount++; continue; }
+        if (!res.taskid) { pushLog('已提交，云端处理中', 'ok'); sentCount++; continue; }
         var done = await waitTask(res.taskid);
         if (done.ok) {
           var n = (done.ext && (done.ext.success_num || done.ext.success_file_num)) || 0;
@@ -587,8 +587,12 @@
     running = false;
     dlg.startBtn.disabled = false;
     dlg.startBtn.textContent = '开始解压';
-    pushLog(failCount ? '完成：成功 ' + okCount + '，失败 ' + failCount : '全部完成', failCount ? 'warn' : 'ok');
-    if (okCount) dlg.refreshBtn.style.display = '';
+    var parts = [];
+    if (okCount) parts.push('成功 ' + okCount);
+    if (sentCount) parts.push('已提交 ' + sentCount);
+    if (failCount) parts.push('失败 ' + failCount);
+    pushLog(parts.length ? parts.join('，') : '没有可解压的压缩包', failCount ? 'warn' : 'ok');
+    if (okCount || sentCount) dlg.refreshBtn.style.display = '';
   }
 
   // ---------------------------------------------------------------- 启动

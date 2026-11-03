@@ -14,15 +14,17 @@
 
 | 字段 | 要求 |
 | --- | --- |
-| `@author` | `zc` |
-| `@name` | 中文展示名，仅限中英文与数字，`^[\u4e00-\u9fa5A-Za-z0-9]{1,12}$` |
-| `@namespace` | 单个目标域名取该 `@match` 主机名（`pan.baidu.com` → `pan.baidu.com`）；多个目标域名取共同可注册域（`pan.baidu.com` + `tieba.baidu.com` → `baidu.com`；`a.example.co.uk` + `b.example.co.uk` → `example.co.uk`）；只写域名，不带协议、尾斜杠与路径；无共同可注册域时取主要服务的域名（一般为 `@match` 中排在首位的域名），并在脚本内注释列出其余域名 |
+| `@author` | `Ohhu` |
+| `@name` | 中文展示名，仅限中英文与数字，`^[\u4e00-\u9fa5A-Za-z0-9]{1,12}$`（仅约束新增脚本） |
+| `@namespace` | 单个目标域名取该 `@match` 主机名（`pan.baidu.com` → `pan.baidu.com`）；多个目标域名取共同可注册域（`pan.baidu.com` + `tieba.baidu.com` → `baidu.com`；`a.example.co.uk` + `b.example.co.uk` → `example.co.uk`）；只写域名，不带协议、尾斜杠与路径；无共同可注册域时取主要服务的域名（一般为 `@match` 中排在首位的域名），并在脚本内注释列出其余域名（仅约束新增脚本） |
 | `@license` | `GPL-3.0-or-later` |
 | `@version` | `X.Y.Z`，按改动级别递增（见下） |
 
-- `@match` 域名增减时，必须同步复核 `@namespace`。
+- 上表的 `@name`、`@namespace` 只约束新增脚本：已存在脚本（本仓库此前已收录的脚本）保持原值，避免改动标识导致同一脚本被重复安装；复核脚本头时不对它们的 `@name`、`@namespace` 提问题，但仍检查 `@author`、`@version`。
+- 已存在脚本的 `@license` 与版权块同样保持原样，不做追溯改写；新增脚本必须使用 `GPL-3.0-or-later` 并补齐版权块。
+- 新增脚本的 `@match` 域名增减时，必须同步复核 `@namespace`。
 - `@namespace` 只是脚本标识的一半，`@name` 与它共同构成唯一键：同一站点可以有多个脚本共用 `pan.baidu.com`，只要 `@name` 不重复；两者任一变化都会被管理器视为新脚本。
-- `==/UserScript==` 之后紧跟版权块：`Copyright (C) <年份> zc`、GPL 的「either version 3 or later」授权语句、`SPDX-License-Identifier: GPL-3.0-or-later`。
+- 新增脚本的 `==/UserScript==` 之后紧跟版权块：`Copyright (C) <年份> Ohhu`、GPL 的「either version 3 or later」授权语句、`SPDX-License-Identifier: GPL-3.0-or-later`。
 
 版本号规则：
 
@@ -35,12 +37,27 @@
 
 `LICENSE` 为 GPLv3 原文，"or later" 由脚本头的 `@license` 与版权块表达。
 
+## 文案约束
+
+面向用户的文案（按钮 `title`、toast、错误提示、弹窗、选项标签）与脚本注释里的说明文字，须满足：
+
+- **不写非必要解释**：不复述代码行为、不预告「点击后会怎样」、不铺垫「为了……所以……」；只给用户此刻需要知道的信息和下一步动作。
+- **不冗余**：同一信息只说一次，标题与副标题、错误原因与补救建议不得同义反复；能用一个词说清的不写一个短句，能删的修饰语一律删掉。
+- **不带 AI 腔**：不用「轻松」「一键搞定」「让你」「请注意」「温馨提示」「希望对你有帮助」这类客服或营销语气；不用「首先/其次/总之」「值得注意的是」「需要指出的是」等过渡套话；不堆感叹号，不用 emoji 充当语气。
+- **语气统一**：错误提示固定为「现象 + 下一步」，动词开头，主语能省则省；不混用「你/您」，不夹半句英文原句充数（确需保留原文时放括号里并标明来源）。
+- **长度克制**：单条提示尽量控制在 40 字以内；技术细节（HTTP 状态、接口路径、字节数）只在排查必需时出现。
+
+反例：「为了让您更顺畅地使用，点击后会自动帮您把内容发布到 Memos，请稍候片刻～」
+正例：「正在发布到 Memos」
+
 ## 目录结构
 
 ```text
 .
 ├── AGENTS.md
 ├── LICENSE
-└── baidu-batch-unzip/
-    └── baidu-batch-unzip.user.js
+├── baidu-batch-unzip/
+│   └── baidu-batch-unzip.user.js
+└── discourse-copy-raw/
+    └── discourse-copy-raw.user.js
 ```
